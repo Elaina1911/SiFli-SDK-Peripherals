@@ -1,0 +1,18 @@
+﻿scons: Reading SConscript files ...
+scons :   File "C:\WORK\SiFli-SDK\main\tools\build\building.py", line 158
+所在位置 行:1 字符: 209
++ ... card_copy\project"; scons --board=sf32lb52-lcd_n16r8 -j8 2>&1 | Out-F ...
++                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  File "C:\WORK...g.py", line 158 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+    EZIP_PATH = os.path.join(SIFLI_SDK, f"tools/png2ezip/ezip{env['tool_suffix'
+]}")
+
+                                                                               
+  ^
+
+SyntaxError: invalid syntax
+
