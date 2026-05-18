@@ -1,7 +1,0 @@
-BSP_USING_SDMMC1 (defined at C:\WORK\SiFli-SDK\main/customer/boards/Kconfig_drv:1534) was assigned the value 'y' but got the value 'n'. Check these unsatisfied dependencies: BSP_USING_SDIO (=n). 
-BSP_AUDPRC_TX0_DMA (defined at C:\WORK\SiFli-SDK\main/customer/boards/Kconfig_drv:1656) was assigned the value 'y' but got the value 'n'. Check these unsatisfied dependencies: BSP_ENABLE_AUD_PRC (=n). 
-BSP_AUDPRC_RX0_DMA (defined at C:\WORK\SiFli-SDK\main/customer/boards/Kconfig_drv:1668) was assigned the value 'y' but got the value 'n'. Check these unsatisfied dependencies: BSP_ENABLE_AUD_PRC (=n). 
-BSP_KEY1_PIN (defined at C:\WORK\SiFli-SDK\main/customer/peripherals/Kconfig:310, C:\WORK\SiFli-SDK\main/customer/boards/Kconfig.v2:55) was assigned the value '34' but got the value ''. Check these unsatisfied dependencies: (BSP_USING_KEY1 || BSP_USING_KEY1) (=n). 
-BSP_KEY1_ACTIVE_HIGH (defined at C:\WORK\SiFli-SDK\main/customer/peripherals/Kconfig:313, C:\WORK\SiFli-SDK\main/customer/boards/Kconfig.v2:58) was assigned the value 'y' but got the value 'n'. Check these unsatisfied dependencies: (BSP_USING_KEY1 || BSP_USING_KEY1) (=n). 
-BSP_LED1_PIN (defined at C:\WORK\SiFli-SDK\main/customer/boards/Kconfig.v2:66) was assigned the value '26' but got the value ''. Check these unsatisfied dependencies: BSP_USING_LED1 (=n). 
-BSP_LED1_ACTIVE_HIGH (defined at C:\WORK\SiFli-SDK\main/customer/boards/Kconfig.v2:69) was assigned the value 'y' but got the value 'n'. Check these unsatisfied dependencies: BSP_USING_LED1 (=n). 

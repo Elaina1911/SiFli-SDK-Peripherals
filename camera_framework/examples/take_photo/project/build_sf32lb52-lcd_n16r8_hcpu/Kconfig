@@ -1,5 +1,0 @@
-source "$SIFLI_SDK/Kconfig.v2"
-source "$SIFLI_SDK/customer/boards/Kconfig.v2"
-source "C:/WORK/SiFli-SDK/main/customer/boards/sf32lb52-lcd_n16r8/hcpu/Kconfig.board"
-osource "D:/SF32/develop/SiFli-SDK/work/ov2640-52/project/sf-pkgs/full_deploy/host/ov2640/0.0.2/examples/take_photo/project/sf-pkgs/Kconfig.conandeps"
-source "D:/SF32/develop/SiFli-SDK/work/ov2640-52/project/sf-pkgs/full_deploy/host/ov2640/0.0.2/examples/take_photo/project/Kconfig.proj"
