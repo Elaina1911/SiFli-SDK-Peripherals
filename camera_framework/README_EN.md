@@ -2,14 +2,13 @@
 
 [中文](README.md) | [English](README_EN.md)
 
-RT-Thread based OV2640 camera component for the SiFli SF32LB52/SF32LB56 platform. The component is built around a layered architecture: sensor driver, DVP data bus (with a generic bus-adapter abstraction), and a generic handle layer. Frame buffers are supplied by the caller — the component does not reserve any PSRAM. Upper-layer applications drive the camera through the handle-layer API or the standard RT-Thread device interface.
+RT-Thread based OV2640 camera component for the SiFli SF32LB52/SF32LB56 platform. The component is built around a layered architecture: sensor driver, DVP data bus (with a generic bus-adapter abstraction), and a generic handle layer. Frame buffers are supplied by the caller — the component does not reserve any PSRAM. Upper-layer applications drive the camera through the handle-layer API.
 
 ## Current Capabilities
 
 - Supports JPEG, RGB565, YUV422, and RAW8 pixel formats
 - Supports single-shot capture
 - Supports continuous capture with double-buffer streaming
-- Supports the RT-Thread device interface
 - Supports a generic handle-layer API for future multi-camera or driver replacement scenarios
 - Supports common image controls such as frame size, quality, mirror, flip, exposure, white balance, gain, and special effects
 
@@ -36,8 +35,7 @@ ov2640/
 │   ├── handle/
 │   │   ├── camera_handle.c         # High-level handle API implementation
 │   │   └── camera_handle.h         # Type definitions and API declarations
-│   ├── camera_device_ops.h
-│   └── camera_types.h
+
 ├── examples/
 │   ├── take_photo/                  # RGB565 single-shot MSH command example
 │   └── take_photo_to_sdcard/        # Capture and save to SD card example
@@ -52,22 +50,17 @@ ov2640/
 ```text
 ┌────────────────────────────────────────────────────┐
 │               Application / Example Layer          │
-│  rt_device_* APIs / camera_handle_* APIs / MSH    │
+│         camera_handle_* APIs / MSH                 │
 └───────────────────────┬────────────────────────────┘
                         │
 ┌───────────────────────▼────────────────────────────┐
 │              handle layer: camera_handle           │
-│  single capture, stream capture, queue management  │
-└───────────────────────┬────────────────────────────┘
-                        │
-┌───────────────────────▼────────────────────────────┐
-│         abstraction: camera_device_ops / types     │
-│  command mapping, stream frame structs, adaptation │
+│  camera_device_ops_t (compile-time binding)        │
 └───────────────────────┬────────────────────────────┘
                         │
 ┌───────────────────────▼────────────────────────────┐
 │         OV2640 driver layer: camera/driver         │
-│     sensor register setup and RT-Thread binding    │
+│     DVP resource init and frame dispatching        │
 └───────────────────────┬────────────────────────────┘
                         │
 ┌───────────────────────▼────────────────────────────┐
@@ -92,37 +85,45 @@ ov2640/
 
 Notes:
 
-- The default DVP resource description is consolidated in `dvp.h` through macros
-- Pin muxing for SCCB (I2C), DVP (PCLK / HSYNC), and XCLK is handled internally by the OV2640 driver during initialization — the application does not need to call `HAL_PIN_Set()`
+- DVP hardware resources are initialized inside the DVP backend from board macros; OV2640 accesses DVP only through the bus-adapter layer
+- Pin muxing for SCCB (I2C), DVP (PCLK / HSYNC), and XCLK is handled internally during initialization — the application does not need to call `HAL_PIN_Set()`
 
 ## Kconfig Options
 
-All options are nested under the `ov2640 camera` menu and depend on `SENSOR_USING_OV2640`.
+All options are nested under `Camera drivers`, then configure:
 
-### DVP
+- `Sensor settings` -> `Use OV2640` -> `OV2640 settings`
+- `SCCB settings`
+- `Data bus settings` -> `Use DVP`
 
-| Option | Default | Range | Description |
-|--------|---------|-------|-------------|
-| `OV2640_DVP_PINGPONG_BUFFER_SIZE` | 8192 | 1024–65536 | DVP DMA ping-pong buffer size in bytes; minimum is row-width × 2 |
-| `OV2640_DVP_VSYNC_PIN` | 42 | — | VSYNC GPIO interrupt pin index (PAx number) |
-
-> `OV2640_DVP_DATA_PIN_BASE` is reserved for internal use — do not modify.
-
-### SCCB
+### OV2640 settings
 
 | Option | Default | Range | Description |
 |--------|---------|-------|-------------|
-| `OV2640_SCCB_I2C_BUS_NAME` | `"i2c1"` | — | RT-Thread I2C bus device name |
-| `OV2640_SCCB_TIMEOUT_MS` | 1000 | — | I2C transaction timeout (ms) |
-| `OV2640_SCCB_MAX_HZ` | 100000 | 10000–400000 | I2C maximum frequency (Hz) |
+| `CAMERA_READ_TIMEOUT_MS` | 1000 | 100–10000 | Single-shot capture wait timeout (ms) |
 
-### Camera
+### SCCB settings
 
 | Option | Default | Range | Description |
 |--------|---------|-------|-------------|
-| `OV2640_CAMERA_READ_TIMEOUT_MS` | 1000 | 100–10000 | Single-shot capture wait timeout (ms) |
-| `OV2640_DVP_XCLK_PIN` | -1 | — | XCLK output pin (PAx); -1 disables |
-| `OV2640_DVP_XCLK_FREQ` | 12 MHz | 6 / 12 MHz | XCLK frequency; derived from GPTIM2 running at 24 MHz |
+| `CAMERA_SCCB_I2C_BUS_NAME` | `"i2c1"` | — | RT-Thread I2C bus device name |
+| `CAMERA_SCCB_TIMEOUT_MS` | 1000 | — | I2C transaction timeout (ms) |
+| `CAMERA_SCCB_MAX_HZ` | 100000 | 10000–400000 | I2C maximum frequency (Hz) |
+
+### Data bus settings -> Use DVP
+
+| Option | Default | Range | Description |
+|--------|---------|-------|-------------|
+| `CAMERA_DVP_PINGPONG_POOL_SIZE` | 10240 | 1024–65536 | OV2640 driver-owned ping-pong pool size ceiling |
+| `CAMERA_DVP_PINGPONG_BUFFER_SIZE` | 8192 | 1024–65536 | DVP DMA ping-pong buffer size in bytes; minimum is row-width × 2 |
+| `CAMERA_DVP_PINGPONG_USE_SECTION` | `n` | — | Place the OV2640 driver-owned ping-pong pool in `.dvp_pingpong` |
+| `CAMERA_DVP_PCLK_PIN` | 41 | — | PCLK input pin index (PAx) |
+| `CAMERA_DVP_HSYNC_PIN` | 43 | — | HSYNC/HREF input pin index (PAx) |
+| `CAMERA_DVP_VSYNC_PIN` | 42 | — | VSYNC GPIO interrupt pin index (PAx number) |
+| `CAMERA_DVP_XCLK_PIN` | -1 | — | XCLK output pin (PAx); -1 disables |
+| `CAMERA_DVP_XCLK_FREQ` | 12 MHz | 6 / 12 MHz | XCLK frequency; derived from GPTIM2 running at 24 MHz |
+
+> `CAMERA_DVP_DATA_PIN_BASE` is reserved for internal use — do not modify.
 
 ## Usage
 
@@ -132,20 +133,14 @@ Drive the camera through `camera_handle.h` for a clean abstraction over the conc
 
 ```c
 #include "camera_handle.h"
-#include "ov2640.h"
 
-/* 1. Initialize the handle instance */
+/* 1. Initialize the handle instance — selects the compile-time driver ops
+ *    (SENSOR_USING_OV2640), calls ops->open(), and applies
+ *    JPEG/VGA/quality-10 defaults. Upper-layer code stays sensor-agnostic. */
 camera_handler_instance_t instance;
-camera_handler_all_input_arg_t input_arg = {
-    .device_name = CAMERA_DEFAULT_DEVICE_NAME,  /* "ov2640" */
-    .device_ops  = ov2640_get_device_ops(),
-};
-camera_handler_instance_init(&instance, &input_arg);
+camera_handler_instance_init(&instance);
 
-/* 2. Open the RT-Thread device */
-camera_init(&instance);
-
-/* 3. Push format + resolution (internally inserts ~500 ms AEC/AWB settle) */
+/* 2. Push format + resolution (internally inserts ~500 ms AEC/AWB settle) */
 camera_capture_config_t cfg = {
     .pixformat = PIXFORMAT_RGB565,
     .framesize = FRAMESIZE_VGA,
@@ -179,36 +174,15 @@ camera_stop_stream(&instance);
 camera_deinit(&instance);
 ```
 
-### Low-Level RT-Thread Device Interface
-
-For direct register-level command access:
-
-```c
-rt_device_t dev = rt_device_find("ov2640");
-rt_device_open(dev, RT_DEVICE_OFLAG_RDWR);
-
-rt_device_control(dev, OV2640_CMD_SET_PIXFORMAT,
-                  (void *)(rt_ubase_t)PIXFORMAT_RGB565);
-rt_device_control(dev, OV2640_CMD_SET_FRAMESIZE,
-                  (void *)(rt_ubase_t)FRAMESIZE_VGA);
-rt_device_control(dev, OV2640_CMD_SET_FRAME_BUFFER,      buffer);
-rt_device_control(dev, OV2640_CMD_SET_FRAME_BUFFER_SIZE,
-                  (void *)(rt_ubase_t)buffer_size);
-
-rt_thread_mdelay(500);
-rt_device_control(dev, OV2640_CMD_START_CAPTURE, NULL);
-
-uint32_t frame_size = 0;
-rt_device_control(dev, OV2640_CMD_GET_FRAME_SIZE, &frame_size);
-
-rt_device_close(dev);
-```
-
 ### PSRAM Allocation Note
 
-VGA-and-above RGB565 frames (e.g. VGA = 640×480×2 = 614 400 bytes) exceed internal SRAM capacity. The caller must allocate the frame buffer from PSRAM. RT-Thread's `rt_memheap` is the recommended approach; the example projects contain a ready-to-copy inline implementation (`examples/take_photo/src/main.c`).
+VGA-and-above RGB565 frames (e.g. VGA = 640×480×2 = 614 400 bytes) exceed internal SRAM capacity. The caller must allocate the frame buffer from PSRAM. RT-Thread’s `rt_memheap` is the recommended approach; the example projects contain a ready-to-copy inline implementation (`examples/take_photo/src/main.c`).
 
-## Control Commands (`rt_device_control`)
+### OV2640 Internal Control Commands
+
+`OV2640_CMD_*` are internal dispatch IDs used inside `ov2640_control()`. They are not part of the public API. The table below is provided as a reference for driver developers.
+
+## Control Commands
 
 ### Format and Resolution
 
@@ -266,7 +240,6 @@ VGA-and-above RGB565 frames (e.g. VGA = 640×480×2 = 614 400 bytes) exceed inte
 |---------|-------|----------|-------------|
 | `OV2640_CMD_SET_FRAME_BUFFER` | 0x1F | `void *` | Set frame buffer pointer |
 | `OV2640_CMD_SET_FRAME_BUFFER_SIZE` | 0x20 | `uint32_t` | Set frame buffer size |
-| `OV2640_CMD_SET_PINGPONG_SIZE` | 0x21 | `uint32_t` | Set DVP DMA ping-pong size |
 
 ### Capture Control
 
@@ -341,8 +314,9 @@ python jlinkbin2bmp.py "-if SWD -speed 12000" rgb565 320 240 0x20100000
 3. **JPEG buffer sizing**: output length is variable — allow at least 300 KB for VGA; UXGA may need 1–2 MB.
 4. **Fixed-size modes** (RGB565 / YUV422 / RAW8): buffer must be exactly `width × height × bytes_per_pixel` (RGB565/YUV422 = 2, RAW8 = 1).
 5. **After changing format or resolution**: `camera_change_settings` inserts ~500 ms internally; when using raw commands, call `rt_thread_mdelay(500)` manually.
-6. **Ping-pong buffer size** (`OV2640_DVP_PINGPONG_BUFFER_SIZE`): for RAW mode set at least `row_width × 2` bytes; larger values reduce risk of DMA truncation in JPEG mode.
-7. **Timeout or first-frame-only**: check VSYNC pin, PCLK / HSYNC / XCLK configuration, and DVP ping-pong buffer size first.
+6. **Auto resize rule**: after a successful frame-size change in non-JPEG mode, the driver automatically updates DVP ping-pong size to `line_bytes × 2`. JPEG mode keeps its current ping-pong size.
+7. **Ping-pong pool and active size**: `CAMERA_DVP_PINGPONG_POOL_SIZE` is the compile-time ceiling; `CAMERA_DVP_PINGPONG_BUFFER_SIZE` is the initial active size.
+8. **Timeout or first-frame-only**: check VSYNC pin, PCLK / HSYNC / XCLK configuration, and DVP ping-pong buffer size first.
 
 ## Dependencies
 

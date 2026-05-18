@@ -1,60 +1,62 @@
-# take_photo 示例说明
+﻿# take_photo 示例
 
-[中文](README.md) | [English](README_EN.md)
+[English](README_EN.md)
 
-## 示例简介
+## 概述
 
-本示例演示如何通过 `ov2640` 设备采集 RGB565 原始图像帧，并将帧缓冲区地址打印到控制台，方便通过 SDK 工具将 PSRAM 中的数据导出到主机后查看。
+该示例使用 `camera_handle.h` 的高层 API 采集 RGB565 单帧，并把帧缓冲地址打印到串口，方便后续从目标板导出原始图像数据。
 
-该示例位于 [examples/take_photo](examples/take_photo)。
+命令位于：`examples/take_photo`
 
-## 使用方法
+## 命令
 
-在 MSH 控制台执行：
-
-```
+```text
 msh> take_photo <framesize> <count>
 ```
 
-参数说明：
-- **framesize**：分辨率，可选值：QQVGA / QCIF / QVGA / CIF / VGA / SVGA / XGA / HD / SXGA / UXGA
-- **count**：采集帧数（>= 1）
+参数：
+
+- `framesize`：`QQVGA / QCIF / QVGA / CIF / VGA / SVGA / XGA / HD / SXGA / UXGA`
+- `count`：采集帧数，必须大于等于 `1`
 
 示例：
 
-```
+```text
 msh> take_photo QVGA 1
 ```
 
+## 调用流程
+
+1. `camera_handler_instance_init()`
+2. `camera_get_capabilities()`
+3. `camera_change_settings()`，设置 `PIXFORMAT_RGB565`
+4. `camera_capture_single()` 循环采集
+5. `camera_deinit()`
+
 ## 输出示例
 
-```
+```text
 RGB565 capture: 320x240, 153600 bytes/frame, buffer @ 0x20100000
 Frame 1 captured: 153600 bytes @ 0x20100000 (RGB565 320x240)
 Export the buffer with the SDK script, e.g.:
   sftool ... read_mem 0x20100000 153600 rgb565.bin
 ```
 
-## 导出与查看
+## 缓冲区说明
 
-采集完成后，`take_photo` 会打印 PSRAM 帧缓冲区的起始地址（如 `0x20100000`）和字节数。
+该示例在应用侧自建了一个基于 `rt_memheap` 的 PSRAM heap，并通过 `psram_heap_malloc()` 为帧缓冲分配空间。
 
-使用 `jlinkbin2bmp.py` 直接从目标板读取帧缓冲区并生成 BMP，无需先导出 bin 文件：
+注意：
 
-工具目录：`C:\WORK\SiFli-SDK\main\tools\bin2bmp\`
+- 这是 **示例自己的分配方式**，不是 `camera_framework` 提供的公共接口
+- 对高分辨率 RGB565，通常需要 PSRAM，内部 SRAM 往往不够
+- 多帧采集时会复用同一块缓冲区，因此命令结束后保留下来的通常只有最后一帧
 
-```
-python jlinkbin2bmp.py "<jlink参数>" rgb565 <width> <height> <addr>
-```
+## 导出图像
 
-示例（SWD 12 MHz，QVGA 缓冲区地址 `0x20100000`）：
+示例会打印帧缓冲地址和字节数。你可以用 SDK 工具从目标板读出内存，再转换为 BMP 或其他可视化格式。
 
-```
-python jlinkbin2bmp.py "-if SWD -speed 12000" rgb565 320 240 0x20100000
-```
+## 备注
 
-## 注意事项
-
-- 帧缓冲区分配在 PSRAM（通过 `psram_heap_malloc`），内部 SRAM 无法容纳大于 QVGA 的 RGB565 帧。
-- 多帧拍摄时复用同一缓冲区，仅最后一帧保留在 PSRAM 中。
-- 引脚复用（SCCB / DVP / XCLK）由 OV2640 驱动内部完成，无需在应用层调用 `HAL_PIN_Set()`。
+- 引脚复用（SCCB / DVP / XCLK）由 OV2640 driver 内部完成，应用层不需要调用 `HAL_PIN_Set()`
+- 该示例适合验证 RGB565 单帧采集链路是否正常

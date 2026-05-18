@@ -36,22 +36,11 @@
 #include "data_bus_adapter.h"
 #include <string.h>
 
-#define BUS_ADAPTER_MAX 8
+#define BUS_ADAPTER_MAX 4
 static bus_adapter_t *g_adapters[BUS_ADAPTER_MAX];
 static int g_adapter_count = 0;
 
-/**
- * @brief Register a bus adapter into the static registry.
- *
- * Registration is idempotent by adapter name: if a same-name adapter already
- * exists, this function returns BUS_OK and keeps the existing entry.
- *
- * @param adapter is a pointer to the adapter instance.
- *
- * @return Return BUS_OK on success.
- *         Return BUS_ERR_INVALID if adapter/name/ops is invalid.
- *         Return BUS_ERR_NO_SLOT when registry is full.
- */
+/** @brief Register adapter in static registry (idempotent by name). */
 int bus_adapter_register(bus_adapter_t *adapter)
 {
     if (!adapter || !adapter->name || !adapter->ops)
@@ -69,13 +58,7 @@ int bus_adapter_register(bus_adapter_t *adapter)
     return BUS_OK;
 }
 
-/**
- * @brief Find a registered adapter by name.
- *
- * @param name is the adapter name string.
- *
- * @return Return adapter pointer when found; otherwise return NULL.
- */
+/** @brief Find adapter by name. */
 bus_adapter_t *bus_adapter_find(const char *name)
 {
     if (!name)
@@ -87,160 +70,120 @@ bus_adapter_t *bus_adapter_find(const char *name)
     return NULL;
 }
 
-/*
- * Common dispatch helper used by thin wrapper APIs.
- *
- * - Return BUS_ERR_INVALID if self or self->ops is NULL.
- * - Return BUS_ERR_NOT_SUPPORTED if requested op is NULL.
- * - Otherwise forward call to the concrete adapter op.
- */
-#define BUS_OP_DISPATCH(self_, member_, ...) \
-    do { \
-        if (!(self_) || !(self_)->ops) \
-            return BUS_ERR_INVALID; \
-        if (!(self_)->ops->member_) \
-            return BUS_ERR_NOT_SUPPORTED; \
-        return (self_)->ops->member_(__VA_ARGS__); \
-    } while (0)
+/** @brief Check adapter and ops table pointer. */
+static int bus_adapter_check(bus_adapter_t *self)
+{
+    if (!self || !self->ops)
+    {
+        return BUS_ERR_INVALID;
+    }
 
-/**
- * @brief Wrapper for adapter init op.
- * @param self is the adapter instance.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+    return BUS_OK;
+}
+
+/** @brief Wrapper for init op. */
 int bus_adapter_init(bus_adapter_t *self)
 {
-    BUS_OP_DISPATCH(self, init, self);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->init)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->init(self);
 }
 
-/**
- * @brief Wrapper for adapter deinit op.
- * @param self is the adapter instance.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for deinit op. */
 int bus_adapter_deinit(bus_adapter_t *self)
 {
-    BUS_OP_DISPATCH(self, deinit, self);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->deinit)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->deinit(self);
 }
 
-/**
- * @brief Wrapper for adapter start op.
- * @param self is the adapter instance.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for start op. */
 int bus_adapter_start(bus_adapter_t *self)
 {
-    BUS_OP_DISPATCH(self, start, self);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->start)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->start(self);
 }
 
-/**
- * @brief Wrapper for adapter stop op.
- * @param self is the adapter instance.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for stop op. */
 int bus_adapter_stop(bus_adapter_t *self)
 {
-    BUS_OP_DISPATCH(self, stop, self);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->stop)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->stop(self);
 }
 
-/**
- * @brief Wrapper for frame callback registration op.
- * @param self      is the adapter instance.
- * @param callback  is the callback function; NULL means unregister.
- * @param user_data is the opaque pointer forwarded to `callback`.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
-int bus_adapter_set_frame_callback(bus_adapter_t *self,
-                                   bus_frame_ready_callback_t callback,
-                                   void *user_data)
+/** @brief Wrapper for frame callback registration op. */
+int bus_adapter_set_frame_notify_callback(bus_adapter_t *self,
+                                          bus_frame_notify_callback_t callback,
+                                          void *user_data)
 {
-    BUS_OP_DISPATCH(self, set_frame_callback, self, callback, user_data);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->set_frame_notify_callback)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->set_frame_notify_callback(self, callback, user_data);
 }
 
-/**
- * @brief Wrapper for start-capture op.
- * @param self is the adapter instance.
- * @param buffer is destination frame buffer pointer.
- * @param size is destination frame buffer size in bytes.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for start_capture op. */
 int bus_adapter_start_capture(bus_adapter_t *self, void *buffer, uint32_t size)
 {
-    BUS_OP_DISPATCH(self, start_capture, self, buffer, size);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->start_capture)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->start_capture(self, buffer, size);
 }
 
-/**
- * @brief Wrapper for rearm-capture op.
- * @param self is the adapter instance.
- * @param buffer is destination frame buffer pointer.
- * @param size is destination frame buffer size in bytes.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for rearm_capture op. */
 int bus_adapter_rearm_capture(bus_adapter_t *self, void *buffer, uint32_t size)
 {
-    BUS_OP_DISPATCH(self, rearm_capture, self, buffer, size);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->rearm_capture)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->rearm_capture(self, buffer, size);
 }
 
-/**
- * @brief Wrapper for abort-capture op.
- * @param self is the adapter instance.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for abort_capture op. */
 int bus_adapter_abort_capture(bus_adapter_t *self)
 {
-    BUS_OP_DISPATCH(self, abort_capture, self);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->abort_capture)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->abort_capture(self);
 }
 
-/**
- * @brief Wrapper for update-buffer op.
- * @param self is the adapter instance.
- * @param buffer is destination frame buffer pointer.
- * @param size is destination frame buffer size in bytes.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
-int bus_adapter_update_buffer(bus_adapter_t *self, void *buffer, uint32_t size)
-{
-    BUS_OP_DISPATCH(self, update_buffer, self, buffer, size);
-}
-
-/**
- * @brief Wrapper for ping-pong-size op.
- * @param self is the adapter instance.
- * @param size is requested ping-pong size in bytes.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for set_pingpong_size op. */
 int bus_adapter_set_pingpong_size(bus_adapter_t *self, uint32_t size)
 {
-    BUS_OP_DISPATCH(self, set_pingpong_size, self, size);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->set_pingpong_size)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->set_pingpong_size(self, size);
 }
 
-/**
- * @brief Wrapper for frame-size query op.
- * @param self is the adapter instance.
- * @return Return frame size when op is implemented; otherwise return 0.
- */
-uint32_t bus_adapter_get_frame_size(bus_adapter_t *self)
-{
-    if (!self || !self->ops || !self->ops->get_frame_size)
-        return 0;
-    return self->ops->get_frame_size(self);
-}
-
-/**
- * @brief Wrapper for set-mode op.
- * @param self is the adapter instance.
- * @param mode is the requested generic capture mode.
- * @return BUS_OK / BUS_ERR_INVALID / BUS_ERR_NOT_SUPPORTED or op return code.
- */
+/** @brief Wrapper for set_mode op. */
 int bus_adapter_set_mode(bus_adapter_t *self, bus_capture_mode_t mode)
 {
-    BUS_OP_DISPATCH(self, set_mode, self, mode);
+    if (bus_adapter_check(self) != BUS_OK)
+        return BUS_ERR_INVALID;
+    if (!self->ops->set_mode)
+        return BUS_ERR_NOT_SUPPORTED;
+    return self->ops->set_mode(self, mode);
 }
 
-/**
- * @brief Invoke the adapter's optional dump_state op for hardware diagnostics.
- * @param self is the adapter instance.
- */
+/** @brief Call optional adapter dump_state hook. */
 void bus_adapter_dump_state(bus_adapter_t *self)
 {
     if (!self || !self->ops || !self->ops->dump_state)

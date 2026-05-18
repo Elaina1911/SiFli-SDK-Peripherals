@@ -9,8 +9,7 @@
  * (e.g. format_sram.py) and viewed as an image on the host.
  *
  * Call sequence:
- *   camera_handler_instance_init()  - bind device name + device_ops
- *   camera_init()                   - open the RT-Thread device
+ *   camera_handler_instance_init()  - prepare handle state, register and open RT-Thread device
  *   camera_change_settings()        - configure RGB565 + framesize
  *   camera_capture_single()         - blocking single-frame grab (looped)
  *   camera_deinit()                 - close the device
@@ -26,7 +25,6 @@
 #include <stdlib.h>
 #include <rtdevice.h>
 #include "mem_section.h"
-#include "ov2640.h"
 #include "camera_handle.h"
 
 /* ------------------------------------------------------------------ *
@@ -154,6 +152,40 @@ static rt_size_t calc_rgb565_buffer_size(framesize_t size,
     return (rt_size_t)(*width) * (rt_size_t)(*height) * 2u;
 }
 
+static rt_bool_t caps_has_pixformat(const camera_capabilities_t *caps, pixformat_t fmt)
+{
+    rt_uint8_t i;
+    if (caps == RT_NULL || caps->pixformats == RT_NULL)
+    {
+        return RT_FALSE;
+    }
+    for (i = 0; i < caps->num_pixformats; i++)
+    {
+        if (caps->pixformats[i] == fmt)
+        {
+            return RT_TRUE;
+        }
+    }
+    return RT_FALSE;
+}
+
+static rt_bool_t caps_has_framesize(const camera_capabilities_t *caps, framesize_t size)
+{
+    rt_uint8_t i;
+    if (caps == RT_NULL || caps->framesizes == RT_NULL)
+    {
+        return RT_FALSE;
+    }
+    for (i = 0; i < caps->num_framesizes; i++)
+    {
+        if (caps->framesizes[i] == size)
+        {
+            return RT_TRUE;
+        }
+    }
+    return RT_FALSE;
+}
+
 /* ------------------------------------------------------------------ *
  * MSH command: take_photo
  * ------------------------------------------------------------------ */
@@ -181,8 +213,8 @@ static rt_size_t calc_rgb565_buffer_size(framesize_t size,
  */
 void take_photo(int argc, char **argv)
 {
-    camera_handler_instance_t      camera_instance;
-    camera_handler_all_input_arg_t input_arg;
+    camera_handler_instance_t     *camera_instance = RT_NULL;
+    const camera_capabilities_t   *caps = RT_NULL;
     camera_capture_config_t        cfg;
     camera_capture_request_t       req;
     camera_handle_status_t         status;
@@ -214,39 +246,54 @@ void take_photo(int argc, char **argv)
         return;
     }
 
-    buffer_size = calc_rgb565_buffer_size(framesize, &width, &height);
-    if (buffer_size == 0)
-    {
-        rt_kprintf("Failed to resolve framesize\n");
-        return;
-    }
-
-    /* 1) Prepare the camera handler instance. */
-    input_arg.device_name = CAMERA_DEFAULT_DEVICE_NAME;     /* "ov2640" */
-    input_arg.device_ops  = ov2640_get_device_ops();
-    status = camera_handler_instance_init(&camera_instance, &input_arg);
+    /* 1) Initialise the camera handler instance.  The driver is selected at
+     *    compile time via Kconfig (SENSOR_USING_OV2640) and the RT-Thread
+     *    device is registered internally. */
+    status = camera_handler_instance_init(&camera_instance);
     if (status != CAMERA_OK)
     {
         rt_kprintf("Failed to initialize camera handler (%d)\n", status);
         return;
     }
 
-    /* 2) Open the underlying RT-Thread camera device. */
-    status = camera_init(&camera_instance);
-    if (status != CAMERA_OK)
+    status = camera_get_capabilities(camera_instance, &caps);
+    if (status != CAMERA_OK || caps == RT_NULL)
     {
-        rt_kprintf("Failed to open camera device (%d)\n", status);
-        return;
+        rt_kprintf("Failed to query camera capabilities (%d)\n", status);
+        goto close_camera;
+    }
+    if (!caps_has_pixformat(caps, PIXFORMAT_RGB565))
+    {
+        rt_kprintf("Camera does not support PIXFORMAT_RGB565\n");
+        goto close_camera;
+    }
+    if (!caps_has_framesize(caps, framesize))
+    {
+        rt_kprintf("Camera does not support requested framesize: %s\n", argv[1]);
+        goto close_camera;
     }
 
-    /* 3) Push RGB565 + framesize configuration. The handle layer inserts
+    buffer_size = calc_rgb565_buffer_size(framesize, &width, &height);
+    if (buffer_size == 0)
+    {
+        rt_kprintf("Failed to resolve framesize\n");
+        goto close_camera;
+    }
+    if (caps->max_buffer_size != 0 && buffer_size > caps->max_buffer_size)
+    {
+        rt_kprintf("Requested RGB565 frame needs %u bytes, capability max=%u\n",
+                   (unsigned int)buffer_size, (unsigned int)caps->max_buffer_size);
+        goto close_camera;
+    }
+
+    /* 2) Push RGB565 + framesize configuration. The handle layer inserts
      *    a 500 ms AEC/AWB settle delay internally. The quality field is
      *    unused for RGB565 but must still hold a valid JPEG-range value;
      *    10 is used as a harmless placeholder. */
     cfg.pixformat = PIXFORMAT_RGB565;
     cfg.framesize = framesize;
     cfg.quality   = 10;
-    status = camera_change_settings(&camera_instance, &cfg);
+    status = camera_change_settings(camera_instance, &cfg);
     if (status != CAMERA_OK)
     {
         rt_kprintf("Failed to configure camera (%d)\n", status);
@@ -274,7 +321,7 @@ void take_photo(int argc, char **argv)
         req.buffer_size = buffer_size;
         req.frame_size  = 0;
 
-        status = camera_capture_single(&camera_instance, &req);
+        status = camera_capture_single(camera_instance, &req);
         if (status != CAMERA_OK)
         {
             rt_kprintf("Capture failed or timed out (index=%d, status=%d)\n",

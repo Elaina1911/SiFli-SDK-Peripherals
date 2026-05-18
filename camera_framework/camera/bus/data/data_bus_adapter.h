@@ -25,7 +25,7 @@
  * - Thin wrapper APIs validate pointers and dispatch calls to the backend ops.
  *
  * Notes:
- * - `bus_adapter_set_frame_callback()` callback is typically invoked in bus ISR
+ * - `bus_adapter_set_frame_notify_callback()` callback is typically invoked in bus ISR
  *   context; callback work should be short and non-blocking.
  * - Wrapper APIs return unified `bus_status_t` style error codes when dispatch
  *   is invalid or unsupported.
@@ -77,30 +77,23 @@ typedef enum {
     BUS_ERR_HW          = -4,  /* underlying hardware reported failure */
 } bus_status_t;
 
-typedef struct bus_frame {
-    void *buffer;
-    uint32_t length;
-    uint32_t timestamp;
-    uint32_t sequence;
-} bus_frame_t;
-
 struct bus_adapter;
 typedef struct bus_adapter bus_adapter_t;
 
 /* Frame ready callback. Called from bus IRQ context; keep work minimal. */
-typedef void (*bus_frame_ready_callback_t)(bus_adapter_t *self,
-                                           const bus_frame_t *frame,
-                                           void *user_data);
+typedef void (*bus_frame_notify_callback_t)(void *buffer,
+                                            uint32_t length,
+                                            void *user_data);
 
 /*
  * Bus adapter operations.
  *
  * - init / deinit / start / stop are lifecycle.
- * - set_frame_callback registers a callback invoked when a complete frame is ready.
+ * - set_frame_notify_callback registers a callback invoked when a complete frame is ready.
  * - start_capture / abort_capture / rearm_capture drive a single-frame capture
  *   sequence that the bus implementation uses to build its data path.
- * - update_buffer / set_pingpong_size / get_frame_size are runtime tunables
- *   common to DMA-driven bus implementations.
+ * - start_capture / rearm_capture / abort_capture represent the minimal
+ *   capture-control surface shared across bus backends.
  *
  * Every op takes the owning adapter as `self`; implementations cast `self->priv`
  * to access their private state.
@@ -113,16 +106,14 @@ typedef struct bus_adapter_ops {
     int (*deinit)(bus_adapter_t *self);
     int (*start)(bus_adapter_t *self);
     int (*stop)(bus_adapter_t *self);
-    int (*set_frame_callback)(bus_adapter_t *self,
-                              bus_frame_ready_callback_t callback,
-                              void *user_data);
+    int (*set_frame_notify_callback)(bus_adapter_t *self,
+                                     bus_frame_notify_callback_t callback,
+                                     void *user_data);
 
     int (*start_capture)(bus_adapter_t *self, void *buffer, uint32_t size);
     int (*rearm_capture)(bus_adapter_t *self, void *buffer, uint32_t size);
     int (*abort_capture)(bus_adapter_t *self);
-    int (*update_buffer)(bus_adapter_t *self, void *buffer, uint32_t size);
     int (*set_pingpong_size)(bus_adapter_t *self, uint32_t size);
-    uint32_t (*get_frame_size)(bus_adapter_t *self);
     /*
      * Change the capture mode at runtime.
      *
@@ -148,27 +139,10 @@ struct bus_adapter {
     void *priv;
 };
 
-/**
- * @brief Register a bus adapter instance into the global registry.
- *
- * If another adapter with the same name already exists, this function returns
- * BUS_OK and keeps the original entry.
- *
- * @param adapter is a pointer to the adapter instance to register.
- *
- * @return Return BUS_OK on success.
- *         Return BUS_ERR_INVALID if adapter/name/ops is invalid.
- *         Return BUS_ERR_NO_SLOT when registry is full.
- */
+/** @brief Register adapter in global registry (idempotent by name). */
 int bus_adapter_register(bus_adapter_t *adapter);
 
-/**
- * @brief Find a registered bus adapter by name.
- *
- * @param name is the adapter name string.
- *
- * @return Return the matching adapter pointer when found; otherwise return NULL.
- */
+/** @brief Find adapter by name. */
 bus_adapter_t *bus_adapter_find(const char *name);
 
 /*
@@ -181,115 +155,39 @@ bus_adapter_t *bus_adapter_find(const char *name);
  * - or underlying adapter return code
  */
 
-/**
- * @brief Initialize adapter runtime and hardware resources.
- * @param self is the adapter instance.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for init op. */
 int bus_adapter_init(bus_adapter_t *self);
 
-/**
- * @brief Deinitialize adapter runtime and hardware resources.
- * @param self is the adapter instance.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for deinit op. */
 int bus_adapter_deinit(bus_adapter_t *self);
 
-/**
- * @brief Start adapter hardware data path.
- * @param self is the adapter instance.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for start op. */
 int bus_adapter_start(bus_adapter_t *self);
 
-/**
- * @brief Stop adapter hardware data path.
- * @param self is the adapter instance.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for stop op. */
 int bus_adapter_stop(bus_adapter_t *self);
 
-/**
- * @brief Register frame callback invoked when one frame is ready.
- * @param self      is the adapter instance.
- * @param callback  is the callback function; NULL means unregister.
- * @param user_data is the opaque pointer forwarded to `callback`.
- * @return See thin-wrapper return convention above.
- */
-int bus_adapter_set_frame_callback(bus_adapter_t *self,
-                                   bus_frame_ready_callback_t callback,
-                                   void *user_data);
+/** @brief Wrapper for frame callback registration op. */
+int bus_adapter_set_frame_notify_callback(bus_adapter_t *self,
+                                          bus_frame_notify_callback_t callback,
+                                          void *user_data);
 
-/**
- * @brief Start one frame capture and optionally set destination buffer.
- * @param self is the adapter instance.
- * @param buffer is destination frame buffer pointer.
- * @param size is destination frame buffer size in bytes.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for start_capture op. */
 int bus_adapter_start_capture(bus_adapter_t *self, void *buffer, uint32_t size);
 
-/**
- * @brief Rearm capture state for next frame without full stop/start.
- * @param self is the adapter instance.
- * @param buffer is destination frame buffer pointer.
- * @param size is destination frame buffer size in bytes.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for rearm_capture op. */
 int bus_adapter_rearm_capture(bus_adapter_t *self, void *buffer, uint32_t size);
 
-/**
- * @brief Abort current capture sequence.
- * @param self is the adapter instance.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for abort_capture op. */
 int bus_adapter_abort_capture(bus_adapter_t *self);
 
-/**
- * @brief Update destination frame buffer pointer and size.
- * @param self is the adapter instance.
- * @param buffer is destination frame buffer pointer.
- * @param size is destination frame buffer size in bytes.
- * @return See thin-wrapper return convention above.
- */
-int bus_adapter_update_buffer(bus_adapter_t *self, void *buffer, uint32_t size);
-
-/**
- * @brief Update ping-pong DMA buffer size.
- * @param self is the adapter instance.
- * @param size is requested ping-pong size in bytes.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for set_pingpong_size op. */
 int bus_adapter_set_pingpong_size(bus_adapter_t *self, uint32_t size);
 
-/**
- * @brief Query current captured frame size in bytes.
- * @param self is the adapter instance.
- * @return Return frame size when op is implemented; otherwise 0.
- */
-uint32_t bus_adapter_get_frame_size(bus_adapter_t *self);
-
-/**
- * @brief Change the bus capture mode at runtime.
- *
- * The adapter implementation must stop any in-flight capture before changing
- * mode. Callers are still responsible for re-issuing @ref bus_adapter_start
- * (or equivalent) when needed.
- *
- * @param self is the adapter instance.
- * @param mode is the requested generic capture mode.
- * @return See thin-wrapper return convention above.
- */
+/** @brief Wrapper for set_mode op. */
 int bus_adapter_set_mode(bus_adapter_t *self, bus_capture_mode_t mode);
 
-/**
- * @brief Dump bus adapter hardware diagnostic state to the log.
- *
- * Intended for debug/timeout diagnostics. No-op when the adapter does not
- * implement the @c dump_state op.
- *
- * @param self is the adapter instance.
- */
+/** @brief Call optional adapter dump_state hook. */
 void bus_adapter_dump_state(bus_adapter_t *self);
 
 #ifdef __cplusplus

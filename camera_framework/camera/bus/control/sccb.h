@@ -21,24 +21,6 @@
 #include <rtconfig.h>
 #endif
 
-#ifndef OV2640_SCCB_TIMEOUT_MS
-#define SCCB_TIMEOUT_MS 1000
-#else
-#define SCCB_TIMEOUT_MS OV2640_SCCB_TIMEOUT_MS
-#endif
-
-#ifndef OV2640_SCCB_MAX_HZ
-#define SCCB_MAX_HZ 100000
-#else
-#define SCCB_MAX_HZ OV2640_SCCB_MAX_HZ
-#endif
-
-#ifndef OV2640_SCCB_I2C_BUS_NAME
-#define SCCB_USE_IIC "i2c1"
-#else
-#define SCCB_USE_IIC OV2640_SCCB_I2C_BUS_NAME
-#endif
-
 #ifdef SF32LB52X
 #define SCCB_SCL_PIN PAD_PA40 // PA40
 #define SCCB_SDA_PIN PAD_PA39 // PA39
@@ -51,9 +33,41 @@
 #error "SCCB pin definitions not set for this platform"
 #endif
 
-rt_err_t sccb_init(const char *i2c_bus_name);
+typedef struct
+{
+	const char *bus_name;
+	uint32_t timeout_ms;
+	uint32_t max_hz;
+} sccb_config_t;
+
+/** @brief Init SCCB I2C transport. */
+rt_err_t sccb_init(const sccb_config_t *config);
+
+/**
+ * @brief Deinitialize SCCB transport and close the I2C device.
+ */
 void sccb_deinit(void);
+
+/** @brief Write register-address + payload bytes. */
+int sccb_write_bytes(uint8_t dev_addr,
+					 const uint8_t *reg_addr,
+					 rt_size_t reg_addr_len,
+					 const uint8_t *data,
+					 rt_size_t data_len);
+
+/** @brief Read payload bytes from sensor registers. */
+int sccb_read_bytes(uint8_t dev_addr,
+					const uint8_t *reg_addr,
+					rt_size_t reg_addr_len,
+					uint8_t *data,
+					rt_size_t data_len);
+
+/**
+ * @brief Write one 8-bit sensor register.
+ */
 int sccb_write(uint8_t dev_addr, uint8_t reg_addr, uint8_t data);
+
+/** @brief Read one 8-bit register (0 on failure). */
 uint8_t sccb_read(uint8_t dev_addr, uint8_t reg_addr);
 
 #endif // SCCB_H_

@@ -4,8 +4,7 @@
  *          边采集边把每一帧写入 SD 卡。
  *
  * 仅支持 JPEG 像素格式，使用 camera_handle.h 的双缓冲流式 API：
- *   camera_handler_instance_init()  - 绑定设备名 + device_ops
- *   camera_init()                   - 打开 RT-Thread 设备
+ *   camera_handler_instance_init()  - 初始化 handle，注册并打开 RT-Thread 设备
  *   camera_change_settings()        - 配置 JPEG + framesize + quality
  *   camera_start_stream()           - 启动双缓冲 DMA 连续采集
  *   camera_get_stream_frame() loop  - 取一帧 -> 立刻写 SD 卡 /photo/photo_NNN.jpg
@@ -28,7 +27,6 @@
 #include "dfs_file.h"
 #include "dfs_posix.h"
 #include "spi_msd.h"
-#include "ov2640.h"
 #include "camera_handle.h"
 
 /* ------------------------------------------------------------------ *
@@ -41,6 +39,9 @@ static struct rt_memheap psram_memheap;
 #define JPEG_MIN_BUFFER_SIZE    (64 * 1024)
 #define JPEG_MAX_BUFFER_SIZE    (2 * 1024 * 1024)
 #define PHOTO_DIR               "/photo"
+#ifndef CAMERA_STREAM_DEBUG_SCAN_JPEG
+#define CAMERA_STREAM_DEBUG_SCAN_JPEG 0
+#endif
 
 /**
  * @brief Initialize the PSRAM heap pool.
@@ -75,6 +76,40 @@ void psram_heap_free(void *p)
 {
     rt_memheap_free(p);
 }
+
+#if CAMERA_STREAM_DEBUG_SCAN_JPEG
+static int jpeg_find_soi(const uint8_t *buf, rt_size_t size)
+{
+    if (buf == RT_NULL || size < 2)
+    {
+        return -1;
+    }
+    for (rt_size_t i = 0; i + 1 < size; i++)
+    {
+        if (buf[i] == 0xFFU && buf[i + 1] == 0xD8U)
+        {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+static int jpeg_find_eoi(const uint8_t *buf, rt_size_t size)
+{
+    if (buf == RT_NULL || size < 2)
+    {
+        return -1;
+    }
+    for (rt_size_t i = 0; i + 1 < size; i++)
+    {
+        if (buf[i] == 0xFFU && buf[i + 1] == 0xD9U)
+        {
+            return (int)(i + 1);
+        }
+    }
+    return -1;
+}
+#endif
 
 /* ------------------------------------------------------------------ *
  * SD card mount
@@ -195,6 +230,40 @@ static rt_size_t calc_jpeg_buffer_size(framesize_t size)
     return buf_size;
 }
 
+static rt_bool_t caps_has_pixformat(const camera_capabilities_t *caps, pixformat_t fmt)
+{
+    rt_uint8_t i;
+    if (caps == RT_NULL || caps->pixformats == RT_NULL)
+    {
+        return RT_FALSE;
+    }
+    for (i = 0; i < caps->num_pixformats; i++)
+    {
+        if (caps->pixformats[i] == fmt)
+        {
+            return RT_TRUE;
+        }
+    }
+    return RT_FALSE;
+}
+
+static rt_bool_t caps_has_framesize(const camera_capabilities_t *caps, framesize_t size)
+{
+    rt_uint8_t i;
+    if (caps == RT_NULL || caps->framesizes == RT_NULL)
+    {
+        return RT_FALSE;
+    }
+    for (i = 0; i < caps->num_framesizes; i++)
+    {
+        if (caps->framesizes[i] == size)
+        {
+            return RT_TRUE;
+        }
+    }
+    return RT_FALSE;
+}
+
 /* ------------------------------------------------------------------ *
  * SD-card output path helpers
  * ------------------------------------------------------------------ */
@@ -244,8 +313,8 @@ static int ensure_photo_dir(void)
  */
 void take_photo(int argc, char **argv)
 {
-    camera_handler_instance_t      camera_instance;
-    camera_handler_all_input_arg_t input_arg;
+    camera_handler_instance_t     *camera_instance = RT_NULL;
+    const camera_capabilities_t   *caps = RT_NULL;
     camera_capture_config_t        cfg;
     camera_stream_config_t         stream_cfg;
     camera_stream_frame_t          frame;
@@ -253,6 +322,9 @@ void take_photo(int argc, char **argv)
     uint8_t                       *buffers[2] = { RT_NULL, RT_NULL };
     rt_bool_t                      stream_started = RT_FALSE;
     rt_size_t                      buffer_size;
+    rt_uint32_t                    dropped_count = 0;
+    rt_uint32_t                    prev_seq = 0;
+    rt_bool_t                      prev_seq_valid = RT_FALSE;
     int                            quality;
     int                            count;
 
@@ -293,37 +365,49 @@ void take_photo(int argc, char **argv)
         return;
     }
 
-    /* 1) Prepare the camera handler instance. */
-    input_arg.device_name = CAMERA_DEFAULT_DEVICE_NAME;     /* "ov2640" */
-    input_arg.device_ops  = ov2640_get_device_ops();
-    status = camera_handler_instance_init(&camera_instance, &input_arg);
+    /* 1) Initialise the camera handler instance.  The driver is selected at
+     *    compile time via Kconfig (SENSOR_USING_OV2640) and the RT-Thread
+     *    device is registered internally. */
+    status = camera_handler_instance_init(&camera_instance);
     if (status != CAMERA_OK)
     {
         rt_kprintf("Failed to initialize camera handler (%d)\n", status);
         return;
     }
 
-    /* 2) Open the underlying RT-Thread camera device. */
-    status = camera_init(&camera_instance);
-    if (status != CAMERA_OK)
+    status = camera_get_capabilities(camera_instance, &caps);
+    if (status != CAMERA_OK || caps == RT_NULL)
     {
-        rt_kprintf("Failed to open camera device (%d)\n", status);
-        return;
+        rt_kprintf("Failed to query camera capabilities (%d)\n", status);
+        goto close_camera;
+    }
+    if (!caps_has_pixformat(caps, PIXFORMAT_JPEG))
+    {
+        rt_kprintf("Camera does not support PIXFORMAT_JPEG\n");
+        goto close_camera;
+    }
+    if (!caps_has_framesize(caps, framesize))
+    {
+        rt_kprintf("Camera does not support requested framesize: %s\n", argv[1]);
+        goto close_camera;
     }
 
-    /* 3) Configure JPEG + framesize + quality.  The handle layer inserts
+    /* 2) Configure JPEG + framesize + quality.  The handle layer inserts
      *    a 500 ms AEC/AWB settle delay internally. */
     cfg.pixformat = PIXFORMAT_JPEG;
     cfg.framesize = framesize;
     cfg.quality   = (uint8_t)quality;
-    status = camera_change_settings(&camera_instance, &cfg);
+    status = camera_change_settings(camera_instance, &cfg);
     if (status != CAMERA_OK)
     {
         rt_kprintf("Failed to configure camera (%d)\n", status);
         goto close_camera;
     }
 
-    /* 4) Allocate two PSRAM frame buffers for ping-pong streaming. */
+    /* 4) Allocate two PSRAM frame buffers for ping-pong streaming.
+     * For JPEG stream, use a JPEG-oriented estimate instead of
+     * caps->max_buffer_size (that value reflects raw worst-case, e.g.
+     * UXGA RGB565, and is too large for this JPEG-only example). */
     buffer_size = calc_jpeg_buffer_size(framesize);
     buffers[0] = psram_heap_malloc(buffer_size);
     buffers[1] = psram_heap_malloc(buffer_size);
@@ -341,7 +425,7 @@ void take_photo(int argc, char **argv)
     stream_cfg.buffers[0]  = buffers[0];
     stream_cfg.buffers[1]  = buffers[1];
     stream_cfg.buffer_size = buffer_size;
-    status = camera_start_stream(&camera_instance, &stream_cfg);
+    status = camera_start_stream(camera_instance, &stream_cfg);
     if (status != CAMERA_OK)
     {
         rt_kprintf("Failed to start stream (%d)\n", status);
@@ -354,7 +438,7 @@ void take_photo(int argc, char **argv)
     for (int photo_idx = 0; photo_idx < count; photo_idx++)
     {
         rt_tick_t start_tick = rt_tick_get();
-        status = camera_get_stream_frame(&camera_instance, &frame,
+        status = camera_get_stream_frame(camera_instance, &frame,
                                          5 * RT_TICK_PER_SECOND);
         if (status != CAMERA_OK)
         {
@@ -370,12 +454,55 @@ void take_photo(int argc, char **argv)
         }
 
         long wait_ms = (long)(rt_tick_get() - start_tick) * 1000L / RT_TICK_PER_SECOND;
-        rt_kprintf("Frame[%d] seq=%lu buf=%u size=%u wait=%ld ms\n",
+        rt_uint32_t seq_delta = prev_seq_valid ? (frame.sequence - prev_seq) : 0;
+        int soi_off = -1;
+        int eoi_off = -1;
+#if CAMERA_STREAM_DEBUG_SCAN_JPEG
+        soi_off = jpeg_find_soi((const uint8_t *)frame.buffer, frame.frame_size);
+        eoi_off = jpeg_find_eoi((const uint8_t *)frame.buffer, frame.frame_size);
+#endif
+        int has_soi_head = (frame.frame_size >= 2 &&
+                            ((uint8_t *)frame.buffer)[0] == 0xFFU &&
+                            ((uint8_t *)frame.buffer)[1] == 0xD8U);
+        int has_eoi_tail = (frame.frame_size >= 2 &&
+                            ((uint8_t *)frame.buffer)[frame.frame_size - 2] == 0xFFU &&
+                            ((uint8_t *)frame.buffer)[frame.frame_size - 1] == 0xD9U);
+        int ring_cross = 0;
+        if (frame.buffer_index == 0 &&
+            frame.buffer >= (void *)buffers[0] &&
+            frame.buffer < (void *)(buffers[0] + buffer_size))
+        {
+            rt_size_t off = (rt_size_t)((uint8_t *)frame.buffer - buffers[0]);
+            ring_cross = ((off + frame.frame_size) > buffer_size) ? 1 : 0;
+        }
+
+#if CAMERA_STREAM_DEBUG_SCAN_JPEG
+        rt_kprintf("Frame[%d] seq=%lu dseq=%lu buf=%u ptr=%p size=%u wait=%ldms soi@%d eoi@%d headSOI=%d tailEOI=%d cross=%d\n",
                    photo_idx,
                    (unsigned long)frame.sequence,
+                   (unsigned long)seq_delta,
                    (unsigned int)frame.buffer_index,
+                   frame.buffer,
                    (unsigned int)frame.frame_size,
-                   wait_ms);
+                   wait_ms,
+                   soi_off,
+                   eoi_off,
+                   has_soi_head,
+                   has_eoi_tail,
+                   ring_cross);
+#else
+        rt_kprintf("[Frame][%d] seq=%lu dseq=%lu\nbuf=[%u] ptr=[%p] size=[%u]\nwait=[%ldms] headSOI=%d tailEOI=%d cross=%d\n",
+                   photo_idx,
+                   (unsigned long)frame.sequence,
+                   (unsigned long)seq_delta,
+                   (unsigned int)frame.buffer_index,
+                   frame.buffer,
+                   (unsigned int)frame.frame_size,
+                   wait_ms,
+                   has_soi_head,
+                   has_eoi_tail,
+                   ring_cross);
+#endif
 
         char file_path[64];
         rt_snprintf(file_path, sizeof(file_path),
@@ -387,7 +514,9 @@ void take_photo(int argc, char **argv)
             continue;
         }
 
+        rt_tick_t wr_start = rt_tick_get();
         int written = write(fd, frame.buffer, frame.frame_size);
+        long wr_ms = (long)(rt_tick_get() - wr_start) * 1000L / RT_TICK_PER_SECOND;
         close(fd);
         if (written != (int)frame.frame_size)
         {
@@ -396,23 +525,26 @@ void take_photo(int argc, char **argv)
             continue;
         }
 
-        rt_kprintf("Saved %s (%u bytes)\n", file_path,
-                   (unsigned int)frame.frame_size);
+        rt_kprintf("Saved %s (%u bytes, write=%ldms)\n\n", file_path,
+                   (unsigned int)frame.frame_size, wr_ms);
+        prev_seq = frame.sequence;
+        prev_seq_valid = RT_TRUE;
     }
 
-    if (camera_instance.stream.dropped_count != 0)
+    status = camera_get_stream_dropped_count(camera_instance, &dropped_count);
+    if (status == CAMERA_OK && dropped_count != 0)
     {
         rt_kprintf("Stream dropped %lu frame(s) due to slow consumer\n",
-                   (unsigned long)camera_instance.stream.dropped_count);
+                   (unsigned long)dropped_count);
     }
 
-    camera_stop_stream(&camera_instance);
+    camera_stop_stream(camera_instance);
     stream_started = RT_FALSE;
 
 free_buffers:
     if (stream_started)
     {
-        camera_stop_stream(&camera_instance);
+        camera_stop_stream(camera_instance);
     }
     if (buffers[0] != RT_NULL) psram_heap_free(buffers[0]);
     if (buffers[1] != RT_NULL) psram_heap_free(buffers[1]);

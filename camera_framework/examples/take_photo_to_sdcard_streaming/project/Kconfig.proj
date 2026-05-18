@@ -4,4 +4,4 @@ config CUSTOM_MEM_MAP
 	select custom_mem_map
 	default y if !SOC_SIMULATOR
 
-orsource "../../../../Kconfig"
+rsource "../../../Kconfig"

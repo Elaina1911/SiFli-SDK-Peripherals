@@ -1,60 +1,62 @@
 ﻿# take_photo Example
 
-[中文](README.md) | [English](README_EN.md)
+[中文](README.md)
 
 ## Overview
 
-This example captures raw RGB565 frames from the `ov2640` device and prints the frame buffer address to the console. The captured pixels can then be exported from PSRAM using SDK tools and viewed as an image on the host.
+This example uses the high-level `camera_handle.h` API to capture RGB565 single frames and print the frame-buffer address so the raw image can be exported from the target later.
 
-This example is located in [examples/take_photo](examples/take_photo).
+Location: `examples/take_photo`
 
-## Usage
+## Command
 
-Run in MSH:
-
-```
+```text
 msh> take_photo <framesize> <count>
 ```
 
 Parameters:
-- **framesize**: resolution — one of QQVGA / QCIF / QVGA / CIF / VGA / SVGA / XGA / HD / SXGA / UXGA
-- **count**: number of frames to capture (>= 1)
+
+- `framesize`: `QQVGA / QCIF / QVGA / CIF / VGA / SVGA / XGA / HD / SXGA / UXGA`
+- `count`: number of frames to capture, must be `>= 1`
 
 Example:
 
-```
+```text
 msh> take_photo QVGA 1
 ```
 
+## Call Sequence
+
+1. `camera_handler_instance_init()`
+2. `camera_get_capabilities()`
+3. `camera_change_settings()` with `PIXFORMAT_RGB565`
+4. loop `camera_capture_single()`
+5. `camera_deinit()`
+
 ## Sample Output
 
-```
+```text
 RGB565 capture: 320x240, 153600 bytes/frame, buffer @ 0x20100000
 Frame 1 captured: 153600 bytes @ 0x20100000 (RGB565 320x240)
 Export the buffer with the SDK script, e.g.:
   sftool ... read_mem 0x20100000 153600 rgb565.bin
 ```
 
-## Exporting and Viewing
+## Buffer Notes
 
-After capture, `take_photo` prints the PSRAM frame buffer start address (e.g. `0x20100000`) and byte count.
+This example builds its own PSRAM heap on the application side and allocates the frame buffer through `psram_heap_malloc()`.
 
-Use `jlinkbin2bmp.py` to read the frame buffer directly from the live target and generate a BMP in one step — no intermediate file needed.
+Important:
 
-Tools are located in: `C:\WORK\SiFli-SDK\main\tools\bin2bmp\`
+- this is **example-local allocation logic**, not a public `camera_framework` allocator
+- higher-resolution RGB565 capture typically requires PSRAM because internal SRAM is not large enough
+- when capturing multiple frames, the same buffer is reused, so only the last frame usually remains after the command finishes
 
-```
-python jlinkbin2bmp.py "<jlink_params>" rgb565 <width> <height> <addr>
-```
+## Exporting The Image
 
-Example (SWD at 12 MHz, QVGA buffer at `0x20100000`):
-
-```
-python jlinkbin2bmp.py "-if SWD -speed 12000" rgb565 320 240 0x20100000
-```
+The command prints the frame-buffer address and byte count. You can then use SDK tools to read back the memory region and convert it into a viewable image.
 
 ## Notes
 
-- The frame buffer is allocated in PSRAM via `psram_heap_malloc`. Internal SRAM is not large enough to hold frames bigger than QVGA in RGB565.
-- When capturing multiple frames, the same buffer is reused; only the last frame remains in PSRAM after the command finishes.
-- Pin muxing for SCCB / DVP / XCLK is handled internally by the OV2640 driver — the application does not need to call `HAL_PIN_Set()`.
+- SCCB / DVP / XCLK pin muxing is handled inside the OV2640 driver; the application does not call `HAL_PIN_Set()`
+- this example is mainly intended to validate the RGB565 single-shot capture path

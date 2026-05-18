@@ -1,2 +1,0 @@
-[python_requires]
-sf-pkg-base/1.0.Z@sifli
