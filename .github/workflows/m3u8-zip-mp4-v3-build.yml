@@ -1,6 +1,9 @@
 name: Build Android APK
 
 on:
+  push:
+    branches:
+      - agent/m3u8-zip-mp4-v3-build
   pull_request:
   workflow_dispatch:
 
