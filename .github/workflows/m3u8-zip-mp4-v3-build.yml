@@ -1,0 +1,44 @@
+name: Build Android APK
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK
+        run: yes | sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+      - name: Build release APK
+        working-directory: .chatgpt-build/m3u8zip_v3
+        run: gradle :app:assembleRelease --stacktrace
+      - name: Create temporary signing key
+        run: |
+          keytool -genkeypair -v -keystore release.jks -storepass android -keypass android \
+            -alias release -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=M3U8 ZIP MP4, OU=Local Build, O=OpenAI, L=Tokyo, ST=Tokyo, C=JP"
+      - name: Sign and verify APK
+        run: |
+          "$ANDROID_HOME/build-tools/35.0.0/zipalign" -f 4 .chatgpt-build/m3u8zip_v3/app/build/outputs/apk/release/app-release-unsigned.apk M3U8-ZIP-to-MP4-v3-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" sign --ks release.jks --ks-pass pass:android --key-pass pass:android \
+            --out M3U8-ZIP-to-MP4-v3.apk M3U8-ZIP-to-MP4-v3-aligned.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs M3U8-ZIP-to-MP4-v3.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: M3U8-ZIP-to-MP4-Android-v3
+          path: M3U8-ZIP-to-MP4-v3.apk
+          if-no-files-found: error
